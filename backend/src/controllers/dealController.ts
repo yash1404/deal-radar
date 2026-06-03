@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 
+import { getDealHealthInsight } from "../services/aiHealthService";
 import {
   getDealByDealId,
   getDealEvents,
@@ -54,6 +55,29 @@ export async function getDealHandler(
 
     const deal = await getDealByDealId(validation.data);
     res.status(200).json(deal);
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function getDealHealthHandler(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const validation = validateDealIdParam(req.params.dealId);
+
+    if (!validation.ok) {
+      res.status(400).json({
+        message: "Validation failed",
+        errors: validation.errors,
+      });
+      return;
+    }
+
+    const insight = await getDealHealthInsight(validation.data);
+    res.status(200).json(insight);
   } catch (error) {
     next(error);
   }

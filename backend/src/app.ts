@@ -4,6 +4,7 @@ import express, { type NextFunction, type Request, type Response } from "express
 import dealRoutes from "./routes/dealRoutes";
 import sseRoutes from "./routes/sseRoutes";
 import webhookRoutes from "./routes/webhookRoutes";
+import { AiHealthServiceError } from "./services/aiHealthService";
 import { DealNotFoundError } from "./services/dealService";
 
 const app = express();
@@ -29,6 +30,11 @@ app.use((_req: Request, res: Response) => {
 app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   if (err instanceof DealNotFoundError) {
     res.status(404).json({ message: err.message });
+    return;
+  }
+
+  if (err instanceof AiHealthServiceError) {
+    res.status(503).json({ message: err.message });
     return;
   }
 
