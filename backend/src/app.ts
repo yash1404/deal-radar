@@ -1,10 +1,16 @@
 import cors from "cors";
 import express, { type NextFunction, type Request, type Response } from "express";
 
+import sseRoutes from "./routes/sseRoutes";
+import webhookRoutes from "./routes/webhookRoutes";
+
 const app = express();
 
 app.use(cors());
 app.use(express.json());
+
+app.use("/webhook", webhookRoutes);
+app.use("/sse", sseRoutes);
 
 app.get("/health", (_req: Request, res: Response) => {
   res.status(200).json({

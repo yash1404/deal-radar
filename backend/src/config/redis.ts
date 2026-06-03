@@ -10,7 +10,7 @@ function requireEnv(name: string): string {
   return value;
 }
 
-function buildRedisOptions(): RedisOptions {
+export function getRedisConnectionOptions(): RedisOptions {
   const host = requireEnv("REDIS_HOST");
   const port = Number(requireEnv("REDIS_PORT"));
   const password = requireEnv("REDIS_PASSWORD");
@@ -22,7 +22,7 @@ function buildRedisOptions(): RedisOptions {
   const username = process.env.REDIS_USERNAME;
   const useTls = process.env.REDIS_TLS !== "false";
 
-  const options: RedisOptions = {
+  const options: RedisOptions = { 
     host,
     port,
     password,
@@ -47,7 +47,7 @@ export async function connectRedis(): Promise<Redis> {
     return redisClient;
   }
 
-  const client = new Redis(buildRedisOptions());
+  const client = new Redis(getRedisConnectionOptions());
 
   client.on("connect", () => {
     console.log("[Redis] Connecting...");

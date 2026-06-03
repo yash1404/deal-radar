@@ -4,6 +4,9 @@ import http from "http";
 import app from "./app";
 import { connectDB, disconnectDB } from "./config/db";
 import { connectRedis, disconnectRedis } from "./config/redis";
+import { Deal, Event } from "./models";
+import { closeEventQueue } from "./queue/eventQueue";
+import { closeEventWorker, startEventWorker } from "./workers/eventWorker";
 
 const PORT = Number(process.env.PORT ?? 5000);
 const SHUTDOWN_TIMEOUT_MS = 10_000;
@@ -18,7 +21,9 @@ async function bootstrap(): Promise<void> {
   console.log("[Server] Starting Deal Radar API...");
 
   await connectDB();
+  await Promise.all([Deal.init(), Event.init()]);
   await connectRedis();
+  startEventWorker();
 
   const server = http.createServer(app);
 
@@ -48,6 +53,8 @@ async function bootstrap(): Promise<void> {
         }
 
         try {
+          await closeEventWorker();
+          await closeEventQueue();
           await disconnectRedis();
           await disconnectDB();
           clearTimeout(forceExitTimer);
