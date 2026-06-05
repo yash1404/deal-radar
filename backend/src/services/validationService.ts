@@ -63,10 +63,6 @@ export function validateDealHealthInputs(
     missingFields.push("amount");
   }
 
-  if (events.length === 0) {
-    missingFields.push("activity_history");
-  }
-
   if (missingFields.length > 0) {
     return {
       sufficient: false,

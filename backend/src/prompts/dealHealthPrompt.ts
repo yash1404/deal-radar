@@ -7,9 +7,9 @@ STRICT RULES (mandatory):
 2. NEVER invent meetings, emails, stakeholders, amounts, dates, or outcomes that are not in the input.
 3. The "score" in your JSON output MUST equal the rule_score number exactly. Do not recalculate or change it.
 4. Derive risk_level ONLY from rule_score:
-   - healthy: rule_score >= 70
-   - warning: rule_score >= 40 and < 70
-   - at_risk: rule_score < 40
+   - healthy: rule_score >= 80
+   - warning: rule_score >= 50 and < 80
+   - at_risk: rule_score < 50
 5. If any required context is marked missing or activity_count is 0, respond that you cannot analyze and list missing fields. Do not guess.
 6. Recommendations must be actionable and based solely on supplied facts (stage, dates, activity types, rule adjustments).
 7. Keep explanation concise (2-4 sentences) and cite specific fields from the input (stage, close_date, activity types, rule adjustments).

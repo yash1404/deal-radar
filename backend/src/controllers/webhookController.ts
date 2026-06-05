@@ -41,6 +41,29 @@ function requireNonEmptyString(
   return trimmed;
 }
 
+const CRM_PAYLOAD_FIELDS = [
+  "stage",
+  "amount",
+  "close_date",
+  "source",
+  "is_source_of_truth",
+] as const;
+
+function mergeCrmFieldsIntoPayload(
+  body: Record<string, unknown>,
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...payload };
+
+  for (const field of CRM_PAYLOAD_FIELDS) {
+    if (body[field] !== undefined && body[field] !== null) {
+      merged[field] = body[field];
+    }
+  }
+
+  return merged;
+}
+
 function validateWebhookPayload(body: unknown): ValidationResult {
   const errors: ValidationError[] = [];
 
@@ -92,13 +115,15 @@ function validateWebhookPayload(body: unknown): ValidationResult {
     return { ok: false, errors };
   }
 
+  const mergedPayload = mergeCrmFieldsIntoPayload(body, payload);
+
   return {
     ok: true,
     data: {
       event_id,
       deal_id,
       type,
-      payload,
+      payload: mergedPayload,
       occurred_at,
       received_at: new Date().toISOString(),
     },

@@ -1,22 +1,20 @@
 import OpenAI from "openai";
 
-import type { IDeal } from "../models/deal.model";
-import type { IEvent } from "../models/event.model";
 import {
   buildDealHealthUserPrompt,
   DEAL_HEALTH_SYSTEM_PROMPT,
 } from "../prompts/dealHealthPrompt";
 import type {
+  DealHealthApiResponse,
   DealHealthContext,
-  DealHealthResponse,
-  InsufficientDealHealthResponse,
   RiskLevel,
-  RuleScoreResult,
 } from "../types/dealHealth.types";
-import { validateDealForHealthScoring } from "./validationService";
-
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
-const DISCOVERY_STAGE = "discovery";
+import { DealNotFoundError } from "./dealService";
+import {resolveHealthStatus } from "./ruleHealthEngine";
+import {
+  loadDealHealthContext,
+  validateDealHealthInputs,
+} from "./validationService";
 
 export class AiHealthServiceError extends Error {
   constructor(message: string) {
@@ -25,138 +23,27 @@ export class AiHealthServiceError extends Error {
   }
 }
 
-function normalizeStage(stage: string): string {
-  return stage.trim().toLowerCase().replace(/\s+/g, "_");
-}
-
-function isDiscoveryStage(stage: string): boolean {
-  return normalizeStage(stage) === DISCOVERY_STAGE;
-}
-
-function isMeetingEvent(type: string): boolean {
-  const normalized = type.trim().toLowerCase();
-  return normalized.includes("meeting");
-}
-
-function isEmailEvent(type: string): boolean {
-  const normalized = type.trim().toLowerCase();
-  return normalized.includes("email");
-}
-
 function clampScore(score: number): number {
   return Math.max(0, Math.min(100, Math.round(score)));
 }
 
-function daysBetween(earlier: Date, later: Date): number {
-  return Math.floor((later.getTime() - earlier.getTime()) / MS_PER_DAY);
-}
-
-function getLastActivityDate(events: IEvent[]): Date | null {
-  if (events.length === 0) {
-    return null;
-  }
-
-  return events.reduce((latest, event) => {
-    return event.occurred_at > latest ? event.occurred_at : latest;
-  }, events[0]!.occurred_at);
-}
-
-export function calculateRuleBasedHealthScore(
-  deal: IDeal,
-  events: IEvent[],
-  now: Date = new Date(),
-): RuleScoreResult {
-  let score = 100;
-  const adjustments: string[] = [];
-
-  const lastActivityAt = getLastActivityDate(events);
-  if (lastActivityAt) {
-    const daysSinceActivity = daysBetween(lastActivityAt, now);
-    if (daysSinceActivity >= 30) {
-      score -= 30;
-      adjustments.push(
-        `No activity for ${daysSinceActivity} days (last activity ${lastActivityAt.toISOString()})`,
-      );
-    }
-  }
-
-  const daysUntilClose = daysBetween(now, deal.close_date);
-  if (isDiscoveryStage(deal.stage) && daysUntilClose >= 0 && daysUntilClose <= 7) {
-    score -= 20;
-    adjustments.push(
-      `Discovery stage with close date in ${daysUntilClose} day(s)`,
-    );
-  }
-
-  if (deal.close_date.getTime() < now.getTime()) {
-    score -= 25;
-    adjustments.push("Close date has already passed");
-  }
-
-  const hasRecentMeeting = events.some((event) => {
-    if (!isMeetingEvent(event.type)) {
-      return false;
-    }
-
-    return daysBetween(event.occurred_at, now) <= 7;
-  });
-
-  if (hasRecentMeeting) {
-    score += 10;
-    adjustments.push("Recent meeting within 7 days");
-  }
-
-  const hasRecentEmail = events.some((event) => {
-    if (!isEmailEvent(event.type)) {
-      return false;
-    }
-
-    return daysBetween(event.occurred_at, now) <= 7;
-  });
-
-  if (hasRecentEmail) {
-    score += 5;
-    adjustments.push("Recent email within 7 days");
-  }
-
-  return {
-    score: clampScore(score),
-    adjustments,
-  };
-}
-
-function resolveRiskLevel(score: number): RiskLevel {
-  if (score >= 70) {
-    return "healthy";
-  }
-
-  if (score >= 40) {
-    return "warning";
-  }
-
-  return "at_risk";
-}
-
-function buildInsufficientResponse(
-  missingFields: string[],
-): InsufficientDealHealthResponse {
-  return {
-    status: "insufficient_data",
-    score: null,
-    reason: "Cannot score deal because required information is missing",
-    missing_fields: missingFields,
-  };
-}
-
 function buildHealthContext(
-  deal: IDeal,
-  events: IEvent[],
-  ruleScore: RuleScoreResult,
+  deal: import("../models/deal.model").IDeal,
+  events: import("../models/event.model").IEvent[],
+  ruleScore: number,
+  ruleAdjustments: string[],
 ): DealHealthContext {
   const sortedEvents = [...events].sort(
     (a, b) => b.occurred_at.getTime() - a.occurred_at.getTime(),
   );
-  const lastActivityAt = getLastActivityDate(events);
+  const lastActivityAt =
+    events.length > 0
+      ? sortedEvents.reduce(
+          (latest, event) =>
+            event.occurred_at > latest ? event.occurred_at : latest,
+          sortedEvents[0]!.occurred_at,
+        )
+      : null;
 
   return {
     deal_id: deal.deal_id,
@@ -170,8 +57,8 @@ function buildHealthContext(
       type: event.type,
       occurred_at: event.occurred_at.toISOString(),
     })),
-    rule_score: ruleScore.score,
-    rule_adjustments: ruleScore.adjustments,
+    rule_score: ruleScore,
+    rule_adjustments: ruleAdjustments,
   };
 }
 
@@ -182,6 +69,41 @@ function getOpenAiClient(): OpenAI {
   }
 
   return new OpenAI({ apiKey });
+}
+
+function isOpenAiUnavailableError(error: unknown): boolean {
+  if (error instanceof OpenAI.APIError) {
+    return true;
+  }
+
+  if (error instanceof AiHealthServiceError) {
+    return true;
+  }
+
+  if (error instanceof Error) {
+    const message = error.message.toLowerCase();
+    return (
+      message.includes("timeout") ||
+      message.includes("network") ||
+      message.includes("econnrefused") ||
+      message.includes("enotfound") ||
+      message.includes("fetch failed")
+    );
+  }
+
+  return false;
+}
+
+function getOpenAiErrorLogMessage(error: unknown): string {
+  if (error instanceof OpenAI.APIError) {
+    return `status=${error.status} type=${error.type ?? "unknown"} message=${error.message}`;
+  }
+
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return String(error);
 }
 
 interface AiExplanationPayload {
@@ -239,7 +161,7 @@ function parseAiExplanation(
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
 
-  const expectedRisk = resolveRiskLevel(ruleScore);
+  const expectedRisk = resolveHealthStatus(ruleScore);
   if (risk_level !== expectedRisk) {
     throw new AiHealthServiceError(
       "OpenAI risk_level does not match rule_score bands",
@@ -259,20 +181,24 @@ async function generateAiExplanation(
 ): Promise<AiExplanationPayload> {
   const client = getOpenAiClient();
   const model = process.env.OPENAI_MODEL?.trim() || "gpt-4o-mini";
+  const timeoutMs = Number(process.env.OPENAI_TIMEOUT_MS ?? 20_000);
 
   console.log(
     `[AiHealthService] Requesting OpenAI explanation deal_id=${context.deal_id} model=${model}`,
   );
 
-  const completion = await client.chat.completions.create({
-    model,
-    temperature: 0,
-    response_format: { type: "json_object" },
-    messages: [
-      { role: "system", content: DEAL_HEALTH_SYSTEM_PROMPT },
-      { role: "user", content: buildDealHealthUserPrompt(context) },
-    ],
-  });
+  const completion = await client.chat.completions.create(
+    {
+      model,
+      temperature: 0,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: DEAL_HEALTH_SYSTEM_PROMPT },
+        { role: "user", content: buildDealHealthUserPrompt(context) },
+      ],
+    },
+    { timeout: timeoutMs },
+  );
 
   const content = completion.choices[0]?.message?.content;
   if (!content) {
@@ -282,42 +208,99 @@ async function generateAiExplanation(
   return parseAiExplanation(content, context.rule_score);
 }
 
+function buildStoredDealResponse(
+  deal: import("../models/deal.model").IDeal,
+): DealHealthApiResponse {
+  return {
+    deal_id: deal.deal_id,
+    health_score: deal.health_score,
+    health_status:
+      deal.health_score >= 80
+        ? "healthy"
+        : deal.health_score >= 50
+          ? "warning"
+          : "at_risk",
+    health_reason: deal.health_reason,
+    source: "rules",
+  };
+}
+
+function buildInsufficientResponse(
+  dealId: string,
+  missingFields: string[],
+): DealHealthApiResponse {
+  const fieldsList = missingFields.join(", ");
+  return {
+    deal_id: dealId,
+    health_score: null,
+    health_status: null,
+    health_reason: `Cannot score deal because required information is missing: ${fieldsList}.`,
+    source: "rules",
+  };
+}
+
+function buildOpenAiSuccessResponse(
+  dealId: string,
+  aiResult: AiExplanationPayload,
+): DealHealthApiResponse {
+  const recommendationsText =
+    aiResult.recommendations.length > 0
+      ? ` Recommendations: ${aiResult.recommendations.join(" ")}`
+      : "";
+
+  return {
+    deal_id: dealId,
+    health_score: clampScore(aiResult.score),
+    health_status: aiResult.risk_level,
+    health_reason: `${aiResult.explanation}${recommendationsText}`.trim(),
+    source: "openai",
+  };
+}
+
 export async function getDealHealthInsight(
   dealId: string,
-): Promise<DealHealthResponse> {
-  const validation = await validateDealForHealthScoring(dealId);
+): Promise<DealHealthApiResponse> {
+  const { deal, events } = await loadDealHealthContext(dealId);
+
+  if (!deal) {
+    throw new DealNotFoundError(dealId);
+  }
+
+  const validation = validateDealHealthInputs(deal, events);
 
   if (!validation.sufficient) {
     console.log(
       `[AiHealthService] Insufficient data deal_id=${dealId} missing=${validation.missingFields.join(",")}`,
     );
-    return buildInsufficientResponse(validation.missingFields);
+    return buildInsufficientResponse(dealId, validation.missingFields);
   }
 
-  const { deal, events } = validation;
-  const ruleScore = calculateRuleBasedHealthScore(deal, events);
-  const context = buildHealthContext(deal, events, ruleScore);
+  const context = buildHealthContext(
+    validation.deal,
+    validation.events,
+    validation.deal.health_score,
+    [],
+  );
 
   console.log(
-    `[AiHealthService] Rule score deal_id=${dealId} score=${ruleScore.score}`,
+    `[AiHealthService] Stored score deal_id=${dealId} score=${validation.deal.health_score}`,
   );
 
   try {
     const aiResult = await generateAiExplanation(context);
-
-    return {
-      status: "ok",
-      score: aiResult.score,
-      rule_score: ruleScore.score,
-      risk_level: aiResult.risk_level,
-      explanation: aiResult.explanation,
-      recommendations: aiResult.recommendations,
-    };
+    return buildOpenAiSuccessResponse(dealId, aiResult);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error(
-      `[AiHealthService] AI explanation failed deal_id=${dealId}: ${message}`,
+    if (!isOpenAiUnavailableError(error)) {
+      const message = getOpenAiErrorLogMessage(error);
+      console.error(
+        `[AiHealthService] Unexpected error deal_id=${dealId}: ${message}`,
+      );
+      return buildStoredDealResponse(validation.deal);
+    }
+
+    console.warn(
+      `[AI Health] OpenAI unavailable, using rule engine. deal_id=${dealId} reason=${getOpenAiErrorLogMessage(error)}`,
     );
-    throw error;
+    return buildStoredDealResponse(validation.deal);
   }
 }
