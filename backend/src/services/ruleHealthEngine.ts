@@ -1,6 +1,7 @@
 import type { IDeal } from "../models/deal.model";
 import type { IEvent } from "../models/event.model";
 import type { RiskLevel } from "../types/dealHealth.types";
+import { calculateHealth } from "./healthScoringService";
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const DISCOVERY_STAGE = "discovery";
@@ -59,52 +60,70 @@ export function buildRuleHealthReason(reasons: string[]): string {
   return reasons.join(" ");
 }
 
+// export function evaluateRuleHealth(
+//   deal: IDeal,
+//   events: IEvent[],
+//   now: Date = new Date(),
+// ): RuleHealthEvaluation {
+//   let score = 100;
+//   const reasons: string[] = [];
+
+//   if (events.length === 0) {
+//     score -= 40;
+//     reasons.push("Deal has no activity history.");
+//   } else {
+//     const lastActivityAt = getLastActivityDate(events);
+//     if (lastActivityAt) {
+//       const daysSinceActivity = daysBetween(lastActivityAt, now);
+//       if (daysSinceActivity >= 30) {
+//         score -= 30;
+//         reasons.push("No recent activity detected.");
+//       }
+//     }
+//   }
+
+ 
+
+
+//   const daysUntilClose = daysBetween(now, deal.close_date);
+//   if (isDiscoveryStage(deal.stage) && daysUntilClose >= 0 && daysUntilClose <= 7) {
+//     score -= 20;
+//     reasons.push("Discovery stage with close date within 7 days.");
+//   }
+
+//   if (deal.close_date.getTime() < now.getTime()) {
+//     score -= 25;
+//     reasons.push("Close date is overdue.");
+//   }
+
+//   if (deal.amount > 100_000 && isDiscoveryStage(deal.stage)) {
+//     score -= 10;
+//     reasons.push("Deal remains in Discovery despite high value.");
+//   }
+
+//   const finalScore = clampScore(score);
+//   const health_status = resolveHealthStatus(finalScore);
+//   const health_reason = buildRuleHealthReason(reasons);
+
+//   return {
+//     score: finalScore,
+//     health_status,
+//     health_reason,
+//     reasons,
+//   };
+// }
+
 export function evaluateRuleHealth(
   deal: IDeal,
   events: IEvent[],
   now: Date = new Date(),
 ): RuleHealthEvaluation {
-  let score = 100;
-  const reasons: string[] = [];
-
-  if (events.length === 0) {
-    score -= 40;
-    reasons.push("Deal has no activity history.");
-  } else {
-    const lastActivityAt = getLastActivityDate(events);
-    if (lastActivityAt) {
-      const daysSinceActivity = daysBetween(lastActivityAt, now);
-      if (daysSinceActivity >= 30) {
-        score -= 30;
-        reasons.push("No recent activity detected.");
-      }
-    }
-  }
-
-  const daysUntilClose = daysBetween(now, deal.close_date);
-  if (isDiscoveryStage(deal.stage) && daysUntilClose >= 0 && daysUntilClose <= 7) {
-    score -= 20;
-    reasons.push("Discovery stage with close date within 7 days.");
-  }
-
-  if (deal.close_date.getTime() < now.getTime()) {
-    score -= 25;
-    reasons.push("Close date is overdue.");
-  }
-
-  if (deal.amount > 100_000 && isDiscoveryStage(deal.stage)) {
-    score -= 10;
-    reasons.push("Deal remains in Discovery despite high value.");
-  }
-
-  const finalScore = clampScore(score);
-  const health_status = resolveHealthStatus(finalScore);
-  const health_reason = buildRuleHealthReason(reasons);
+  const calculated = calculateHealth(deal, now);
 
   return {
-    score: finalScore,
-    health_status,
-    health_reason,
-    reasons,
+    score: calculated.health_score,
+    health_status: resolveHealthStatus(calculated.health_score),
+    health_reason: calculated.health_reason,
+    reasons: [calculated.health_reason],
   };
 }

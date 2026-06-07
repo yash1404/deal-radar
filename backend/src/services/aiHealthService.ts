@@ -258,6 +258,8 @@ export async function getDealHealthInsight(
 ): Promise<DealHealthApiResponse> {
   const { deal, events } = await loadDealHealthContext(dealId);
 
+
+
   if (!deal) {
     throw new DealNotFoundError(dealId);
   }
@@ -271,12 +273,23 @@ export async function getDealHealthInsight(
     return buildInsufficientResponse(dealId, validation.missingFields);
   }
 
-  const ruleEvaluation = evaluateRuleHealth(validation.deal, validation.events);
+  // const ruleEvaluation = evaluateRuleHealth(validation.deal, validation.events);
+  const ruleEvaluation={
+    score: validation.deal.health_score,
+    health_status:
+      validation.deal.health_score >= 80
+        ? "healthy"
+        : validation.deal.health_score >= 50
+        ? "warning"
+        : "at_risk",
+    health_reason: validation.deal.health_reason,
+    reasons: [],
+  };
   const context = buildHealthContext(
     validation.deal,
     validation.events,
-    ruleEvaluation.score,
-    ruleEvaluation.reasons,
+    validation.deal.health_score,
+    [],
   );
 
   console.log(
