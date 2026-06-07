@@ -176,7 +176,6 @@ Implemented:
 * Filtering by status
 * Pause / Resume stream functionality
 * Loading, empty, and error states
-* Efficient rendering using AG Grid virtualization
 
 ---
 
