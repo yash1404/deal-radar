@@ -123,7 +123,6 @@ export async function updateDealFromEvent(
           ...defaults,
           health_score: initialHealth.health_score,
           health_reason: initialHealth.health_reason,
-          health_status: initialHealth.health_status,
         },
       ],
       session ? { session } : undefined,
@@ -174,7 +173,6 @@ export async function applyHealthToDeal(
       $set: {
         health_score: health.health_score,
         health_reason: health.health_reason,
-        health_status: health.health_status,
       },
     },
     { new: true, runValidators: true },

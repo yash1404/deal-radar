@@ -84,7 +84,7 @@ function getNextIntervalMs(): number {
   if (FIXED_INTERVAL_MS > 0) {
     return FIXED_INTERVAL_MS;
   }
-  return randomInt(4000, 5000);
+  return randomInt(2000, 5000);
 }
 
 function createInitialDeals(): Map<string, SimDealState> {

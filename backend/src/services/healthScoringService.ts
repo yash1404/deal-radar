@@ -1,10 +1,8 @@
 import type { IDeal } from "../models/deal.model";
-import { resolveHealthStatus } from "./dealQueryService";
 
 export interface HealthScoreResult {
   health_score: number;
   health_reason: string;
-  health_status: string;
 }
 
 const STAGE_BASE_SCORES: Record<string, number> = {
@@ -97,7 +95,5 @@ export function calculateHealth(
     `Final health score ${health_score}`,
   ].join("; ");
 
-  const health_status = resolveHealthStatus(health_score);
-
-  return { health_score, health_reason, health_status };
+  return { health_score, health_reason };
 }

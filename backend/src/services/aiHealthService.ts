@@ -10,7 +10,7 @@ import type {
   RiskLevel,
 } from "../types/dealHealth.types";
 import { DealNotFoundError } from "./dealService";
-import {resolveHealthStatus } from "./ruleHealthEngine";
+import { evaluateRuleHealth, resolveHealthStatus } from "./ruleHealthEngine";
 import {
   loadDealHealthContext,
   validateDealHealthInputs,
@@ -208,19 +208,15 @@ async function generateAiExplanation(
   return parseAiExplanation(content, context.rule_score);
 }
 
-function buildStoredDealResponse(
-  deal: import("../models/deal.model").IDeal,
+function buildRuleFallbackResponse(
+  dealId: string,
+  evaluation: ReturnType<typeof evaluateRuleHealth>,
 ): DealHealthApiResponse {
   return {
-    deal_id: deal.deal_id,
-    health_score: deal.health_score,
-    health_status:
-      deal.health_score >= 80
-        ? "healthy"
-        : deal.health_score >= 50
-          ? "warning"
-          : "at_risk",
-    health_reason: deal.health_reason,
+    deal_id: dealId,
+    health_score: evaluation.score,
+    health_status: evaluation.health_status,
+    health_reason: evaluation.health_reason,
     source: "rules",
   };
 }
@@ -275,15 +271,16 @@ export async function getDealHealthInsight(
     return buildInsufficientResponse(dealId, validation.missingFields);
   }
 
+  const ruleEvaluation = evaluateRuleHealth(validation.deal, validation.events);
   const context = buildHealthContext(
     validation.deal,
     validation.events,
-    validation.deal.health_score,
-    [],
+    ruleEvaluation.score,
+    ruleEvaluation.reasons,
   );
 
   console.log(
-    `[AiHealthService] Stored score deal_id=${dealId} score=${validation.deal.health_score}`,
+    `[AiHealthService] Rule score deal_id=${dealId} score=${ruleEvaluation.score}`,
   );
 
   try {
@@ -295,12 +292,12 @@ export async function getDealHealthInsight(
       console.error(
         `[AiHealthService] Unexpected error deal_id=${dealId}: ${message}`,
       );
-      return buildStoredDealResponse(validation.deal);
+      return buildRuleFallbackResponse(dealId, ruleEvaluation);
     }
 
     console.warn(
       `[AI Health] OpenAI unavailable, using rule engine. deal_id=${dealId} reason=${getOpenAiErrorLogMessage(error)}`,
     );
-    return buildStoredDealResponse(validation.deal);
+    return buildRuleFallbackResponse(dealId, ruleEvaluation);
   }
 }
